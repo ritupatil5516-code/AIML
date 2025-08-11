@@ -1,0 +1,41 @@
+[
+  {
+    "transactionId": "t-001",
+    "accountId": "acct-1",
+    "transactionType": "PURCHASE",
+    "transactionStatus": "POSTED",
+    "amount": -210.0,
+    "transactionDateTime": "2025-08-05T10:00:00Z",
+    "currencyCode": "USD",
+    "merchantName": "Apple"
+  },
+  {
+    "transactionId": "t-002",
+    "accountId": "acct-1",
+    "transactionType": "DEPOSIT",
+    "transactionStatus": "POSTED",
+    "amount": 1500.0,
+    "transactionDateTime": "2025-08-03T09:00:00Z",
+    "currencyCode": "USD",
+    "merchantName": "Payroll"
+  },
+  {
+    "transactionId": "t-003",
+    "accountId": "acct-1",
+    "transactionType": "INTEREST",
+    "transactionStatus": "POSTED",
+    "amount": 3.25,
+    "transactionDateTime": "2025-08-10T10:00:00Z",
+    "currencyCode": "USD"
+  },
+  {
+    "transactionId": "t-004",
+    "accountId": "acct-1",
+    "transactionType": "PURCHASE",
+    "transactionStatus": "POSTED",
+    "amount": -35.5,
+    "transactionDateTime": "2025-07-12T15:00:00Z",
+    "currencyCode": "USD",
+    "merchantName": "Coffee Roasters"
+  }
+]
