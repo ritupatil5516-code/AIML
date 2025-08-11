@@ -2,8 +2,6 @@ pydantic>=2.7
 openai>=1.40
 streamlit>=1.36
 numpy>=1.24
-
-llama-index>=0.10.40
-
 faiss-cpu>=1.7.4
-numpy>=1.24
+llama-index>=0.10.40
+pyyaml>=6.0.1

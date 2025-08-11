@@ -1,4 +1,3 @@
-
 import os, yaml
 from typing import Dict, Any, Optional
 
@@ -23,7 +22,6 @@ def get_field_doc(field: str) -> Optional[str]:
     fields = g.get("fields", {})
     info = fields.get(field)
     if not info:
-        # try alias permutations
         alt = field.replace(" ", "").replace("-", "").replace("_", "")
         for k,v in fields.items():
             key_norm = k.replace(" ", "").replace("-", "").replace("_", "")

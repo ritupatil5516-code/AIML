@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Quick eval runner against the copilot.
-"""
 import json, argparse, math
 from pathlib import Path
 from src.engine import ask_tx
@@ -33,7 +30,11 @@ def main():
             got = res.get("answer", "")
             ok = score(exp, got)
             total += 1; correct += 1 if ok else 0
-            print(f"Q: {q}\n  expected: {exp}\n  got: {got}\n  {'OK' if ok else 'MISS'}\n")
+            print(f"Q: {q}
+  expected: {exp}
+  got: {got}
+  {'OK' if ok else 'MISS'}
+")
 
     print(f"Accuracy: {correct}/{total} = {correct/total:.1%}")
 

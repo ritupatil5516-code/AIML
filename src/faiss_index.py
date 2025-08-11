@@ -1,12 +1,11 @@
-
 import os, json, numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from .models import Transaction
 
 try:
     import faiss  # faiss-cpu or faiss-gpu
 except Exception as e:
-    raise RuntimeError("faiss is required. Install with `pip install faiss-cpu` (or faiss-gpu).") from e
+    raise RuntimeError("faiss is required. Install with `pip install faiss-cpu`.") from e
 
 INDEX_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "index_faiss")
 os.makedirs(INDEX_DIR, exist_ok=True)
@@ -30,8 +29,7 @@ def _embed_texts(texts: List[str], embed_model: str) -> np.ndarray:
         for d in resp.data:
             vecs.append(d.embedding)
     V = np.array(vecs, dtype="float32")
-    # L2 normalize to use cosine via inner product
-    V /= (np.linalg.norm(V, axis=1, keepdims=True) + 1e-8)
+    V /= (np.linalg.norm(V, axis=1, keepdims=True) + 1e-8)  # L2 normalize
     return V
 
 def build_faiss_index(transactions: List[Transaction], embed_model: str | None = None, name: str = "tx_faiss"):
@@ -44,22 +42,14 @@ def build_faiss_index(transactions: List[Transaction], embed_model: str | None =
     V = _embed_texts(texts, embed_model)
     dim = V.shape[1]
 
-    # Cosine similarity with inner product on normalized vectors
+    # Exact cosine via inner product on normalized vectors
     index = faiss.IndexFlatIP(dim)
-index.add(V)
+    index.add(V)
 
-    # Persist
     idx_path = os.path.join(INDEX_DIR, f"{name}.index")
     faiss.write_index(index, idx_path)
 
-    meta = {
-        "ids": ids,
-        "texts": texts,
-        "merchants": merchants,
-        "categories": categories,
-        "model": embed_model,
-        "dim": dim
-    }
+    meta = {"ids": ids, "texts": texts, "merchants": merchants, "categories": categories, "model": embed_model, "dim": dim}
     meta_path = os.path.join(INDEX_DIR, f"{name}.meta.json")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f)
@@ -83,7 +73,6 @@ def semantic_search_faiss(query: str, top_k: int = 12, embed_model: str | None =
     embed_model = embed_model or os.getenv("EMBED_MODEL", "BAAI/bge-en-icl")
     index, meta = _load_index_and_meta(name)
 
-
     # Embed query
     from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE"))
@@ -91,7 +80,6 @@ def semantic_search_faiss(query: str, top_k: int = 12, embed_model: str | None =
     import numpy as np
     q = np.array(qv, dtype="float32"); q = q/(np.linalg.norm(q)+1e-8)
 
-    # Search (inner product on normalized vectors == cosine)
     sims, idxs = index.search(q.reshape(1,-1), top_k)
     sims = sims[0]; idxs = idxs[0]
 
