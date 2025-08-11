@@ -1,0 +1,70 @@
+
+version: 1
+namespace: "AcmeBank"
+fields:
+  accountId:
+    title: "Account Identifier"
+    description: "Internal unique ID for a deposit or credit account. Not the card PAN. Stable across statements."
+    pii_class: "low"
+    examples: ["acct-00123"]
+  personId:
+    title: "Customer Identifier"
+    description: "Internal unique ID for a person; may own multiple accounts."
+    pii_class: "high"
+    examples: ["cust-abc42"]
+  transactionId:
+    title: "Transaction Identifier"
+    description: "Immutable transaction record key. Used for audit and reconciliation."
+    pii_class: "low"
+    examples: ["t-9fe2a3b"]
+  transactionType:
+    title: "Transaction Type"
+    description: "One of PURCHASE, DEPOSIT, WITHDRAWAL, INTEREST, FEE, REFUND, TRANSFER_IN, TRANSFER_OUT."
+    pii_class: "none"
+  transactionStatus:
+    title: "Posting Status"
+    description: "POSTED or PENDING. Only POSTED amounts affect statement totals."
+  amount:
+    title: "Signed Amount"
+    description: "Positive = inflow (money in). Negative = outflow (money out). All amounts in currencyCode units."
+  currencyCode:
+    title: "Currency"
+    description: "ISO 4217 currency code, e.g., USD."
+  transactionDateTime:
+    title: "Transaction Timestamp"
+    description: "ISO 8601. Use month_key(YYYY-MM) for monthly aggregations."
+  merchantName:
+    title: "Merchant Name"
+    description: "Only present for merchant-present transactions (e.g., PURCHASE/REFUND)."
+  merchantCategoryName:
+    title: "Merchant Category"
+    description: "Domain-specific category name; may map to MCC."
+  cardType:
+    title: "Card Type"
+    description: "DEBIT or CREDIT; present only for card-present operations."
+  lastFourDigits:
+    title: "Card Last Four"
+    description: "Tokenized last 4 digits; never a full PAN."
+  isRecurring:
+    title: "Recurring Flag"
+    description: "Boolean indicator for recurring charges (subscriptions, installments)."
+  installmentPlanId:
+    title: "Installment Plan ID"
+    description: "Identifier linking all terms of an installment conversion."
+  installmentTermNumber:
+    title: "Installment Term Number"
+    description: "Nth term in the installment schedule (1..installmentTermTotal)."
+  installmentTermTotal:
+    title: "Installment Term Total"
+    description: "Total number of terms in the schedule."
+  installmentPurchaseAmount:
+    title: "Installment Purchase Amount"
+    description: "Original purchase amount converted to an installment plan."
+  installmentMonthlyAmount:
+    title: "Installment Monthly Amount"
+    description: "Fixed monthly charge per installment term."
+business_rules:
+  posted_only_in_statements: "When computing statement totals, include only POSTED transactions."
+  sign_convention: "Positive = inflow, Negative = outflow."
+  interest_scope: "INTEREST applies to deposit accounts; credit card interest should be handled via fees/finance charges as configured."
+  rounding: "Round currency at 2 decimal places."

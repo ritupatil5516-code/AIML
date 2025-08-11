@@ -1,8 +1,7 @@
 import json, os
 from typing import List
 from .models import Transaction
-
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data_synth")
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 def load_transactions(path: str = "transactions.json") -> List[Transaction]:
     p = path if os.path.isabs(path) else os.path.join(DATA_DIR, path)
     if not os.path.exists(p): raise FileNotFoundError(p)

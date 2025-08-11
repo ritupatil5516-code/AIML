@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """
 Generate synthetic transactions + QA (train/eval) for the Transactions Copilot.
+Supports installments, recurring, deposits, fees, etc.
 
 Usage:
   python scripts/generate_tx_dataset.py --out-dir data_synth \
     --months 3 --accounts 2 --avg-per-month 80 --seed 42
-
-Outputs:
-  <out-dir>/transactions.json
-  <out-dir>/tx_qa_train.jsonl
-  <out-dir>/tx_qa_eval.jsonl
 """
 import json, argparse, random, uuid, datetime as dt
 from collections import defaultdict
@@ -160,109 +156,66 @@ def gen_transactions(n_accounts=2, months=3, avg_tx_per_month=80, pct_installmen
     transactions.sort(key=lambda x: x["transactionDateTime"])
     return transactions
 
-def build_index(transactions):
+def build_index_cli(transactions_json: str, embed_model: str = "text-embedding-3-small"):
+    # optional helper to index freshly generated data
+    from src.io import load_transactions
+    from src.semantic_index import build_index
+    try:
+        tx = load_transactions(transactions_json)
+        path = build_index(tx, embed_model=embed_model, filename="tx_index")
+        print(f"Built index -> {path}")
+    except Exception as e:
+        print(f"Index build failed: {e}")
+
+def build_qas(transactions):
+    from collections import defaultdict
+    def month_key(s): return s[:7]
     idx = {"by_month": defaultdict(list), "by_type": defaultdict(list), "by_plan": defaultdict(list)}
     for t in transactions:
         idx["by_month"][month_key(t["transactionDateTime"])].append(t)
         idx["by_type"][t["transactionType"]].append(t)
         if t.get("installmentPlanId"):
             idx["by_plan"][t["installmentPlanId"]].append(t)
-    return idx
 
-def qa_sets(transactions):
-    idx = build_index(transactions)
-    months = sorted(set(month_key(t["transactionDateTime"]) for t in transactions))
     qa = []
-
-    def q_count_purchases_over(amount, month=None):
-        subset = transactions if month is None else idx["by_month"].get(month, [])
-        ids = [t["transactionId"] for t in subset if t["transactionType"]=="PURCHASE" and t["amount"] < -amount]
-        return {"question": f"How many PURCHASE transactions over ${amount} in {month or 'all months'}?",
-                "answer": str(len(ids)), "reasoning": f"type=PURCHASE & amount<-{amount}", "sources": ids[:25]}
-
-    def q_total_interest(month=None):
-        subset = transactions if month is None else idx["by_month"].get(month, [])
-        ids = [t["transactionId"] for t in subset if t["transactionType"]=="INTEREST"]
-        total = round(sum(t["amount"] for t in subset if t["transactionType"]=="INTEREST"), 2)
-        return {"question": f"What is the total INTEREST amount in {month or 'all months'}?",
-                "answer": f"{total}", "reasoning": "sum amounts where type=INTEREST", "sources": ids[:25]}
-
-    def q_has_installments():
-        plan_ids = list(idx["by_plan"].keys())
-        return {"question": "Do I have any installment transactions? If yes, list the plan IDs.",
-                "answer": "Yes" if plan_ids else "No",
-                "reasoning": "presence of installmentPlanId",
-                "sources": [idx["by_plan"][p][0]["transactionId"] for p in plan_ids][:25],
-                "extra": {"plans": plan_ids}}
-
-    def q_installment_summary(plan_id):
-        terms = idx["by_plan"].get(plan_id, [])
-        if not terms: return None
-        terms_sorted = sorted(terms, key=lambda t: t["installmentTermNumber"])
-        total_terms = terms_sorted[0]["installmentTermTotal"]
-        paid_terms = len(terms_sorted)
-        monthly = terms_sorted[0]["installmentMonthlyAmount"]
-        remaining_terms = max(0, total_terms - paid_terms)
-        remaining_amount = round(monthly * remaining_terms, 2)
-        ids = [t["transactionId"] for t in terms_sorted]
-        return {"question": f"For installment plan {plan_id}, how many terms remain and how much is remaining?",
-                "answer": json.dumps({"remaining_terms": remaining_terms, "remaining_amount": remaining_amount}),
-                "reasoning": f"total={total_terms}, paid={paid_terms}, monthly={monthly}", "sources": ids[:25]}
-
-    def q_top_merchants(k=3, month=None):
-        subset = transactions if month is None else idx["by_month"].get(month, [])
-        spend = defaultdict(float); seen = defaultdict(list)
-        for t in subset:
-            if t["transactionType"]=="PURCHASE" and (t["amount"] or 0) < 0 and t.get("merchantName"):
-                spend[t["merchantName"]] += -t["amount"]
-                seen[t["merchantName"]].append(t["transactionId"])
-        tops = sorted(spend.items(), key=lambda x:x[1], reverse=True)[:k]
-        ids = [tid for m,_ in tops for tid in seen[m][:5]]
-        return {"question": f"Who are my top {k} merchants by spend in {month or 'all months'}?",
-                "answer": json.dumps([{m: round(v,2)} for m,v in tops]),
-                "reasoning": "sum spend by merchant over PURCHASE debits",
-                "sources": ids[:25]}
-
-    def q_monthly_net_flow(month):
-        subset = idx["by_month"].get(month, [])
-        total = round(sum(t["amount"] for t in subset), 2)
-        ids = [t["transactionId"] for t in subset][:25]
-        return {"question": f"What is my net flow (sum of amounts) in {month}?",
-                "answer": f"{total}", "reasoning": "sum amounts for month", "sources": ids}
-
-    qa.append(q_count_purchases_over(50))
-    qa.append(q_total_interest())
-    qa.append(q_has_installments())
-    if idx["by_plan"]:
-        any_plan = next(iter(idx["by_plan"].keys()))
-        qa.append(q_installment_summary(any_plan))
-    qa.append(q_top_merchants(5))
-    for m in months:
-        qa.append(q_monthly_net_flow(m))
-        qa.append(q_count_purchases_over(20, month=m))
-        qa.append(q_total_interest(month=m))
-
-    split = max(5, int(len(qa)*0.6))
-    return qa[:split], qa[split:]
+    # examples
+    ids = [t["transactionId"] for t in idx["by_type"].get("INTEREST", [])]
+    total_int = round(sum(t["amount"] for t in idx["by_type"].get("INTEREST", [])), 2)
+    qa.append({"question":"What is the total INTEREST amount in all months?","answer":f"{total_int}","reasoning":"Sum INTEREST amounts","sources": ids[:25]})
+    # add one month-specific if exists
+    if idx["by_month"]:
+        m = sorted(idx["by_month"].keys())[-1]
+        month_set = idx["by_month"][m]
+        ids2 = [t["transactionId"] for t in month_set if t["transactionType"]=="PURCHASE" and t["amount"] < -50]
+        qa.append({"question":f"How many PURCHASE transactions over $50 in {m}?","answer":str(len(ids2)),"reasoning":"Count PURCHASE with amount<-50 for month","sources": ids2[:25]})
+    # installment presence
+    plans = list(idx["by_plan"].keys())
+    qa.append({"question":"Do I have any installment transactions? If yes, list the plan IDs.","answer":"Yes" if plans else "No","reasoning":"presence of installmentPlanId","sources":[idx["by_plan"][p][0]["transactionId"] for p in plans][:25],"extra":{"plans": plans}})
+    return qa
 
 def main():
+    import argparse, os
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--months", type=int, default=3)
     ap.add_argument("--accounts", type=int, default=2)
     ap.add_argument("--avg-per-month", type=int, default=80)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--build-index", action="store_true")
     args = ap.parse_args()
 
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
     tx = gen_transactions(n_accounts=args.accounts, months=args.months, avg_tx_per_month=args.avg_per_month, seed=args.seed)
     (out / "transactions.json").write_text(json.dumps(tx, indent=2))
-    train, evals = qa_sets(tx)
+    qa = build_qas(tx)
     with (out / "tx_qa_train.jsonl").open("w") as f:
-        for ex in train: f.write(json.dumps(ex) + "\n")
+        for ex in qa[: max(3, int(len(qa)*0.6)) ]: f.write(json.dumps(ex) + "\n")
     with (out / "tx_qa_eval.jsonl").open("w") as f:
-        for ex in evals: f.write(json.dumps(ex) + "\n")
-    print(f"Wrote {len(tx)} transactions, {len(train)} train QAs, {len(evals)} eval QAs to {out}")
+        for ex in qa[max(3, int(len(qa)*0.6)) : ]: f.write(json.dumps(ex) + "\n")
+
+    print(f"Wrote {len(tx)} transactions and {len(qa)} QAs to {out}")
+    if args.build_index:
+        build_index_cli(str(out / "transactions.json"))
 
 if __name__ == "__main__":
     main()

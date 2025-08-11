@@ -24,3 +24,12 @@ def get_transaction_by_id(transactions: List[Transaction], txn_id: str) -> Dict[
         if (t.id or "") == (txn_id or ""):
             return {"transactionId": t.id, "amount": t.amount, "type": t.transaction_type, "date": t.transaction_date_time, "status": t.transaction_status, "currency": t.currency_code, "merchant": t.merchant_name}
     return None
+
+
+from .domain import get_field_doc
+
+def explain_field(field_name: str) -> dict | None:
+    doc = get_field_doc(field_name)
+    if not doc:
+        return None
+    return {"field": field_name, "explanation": doc}

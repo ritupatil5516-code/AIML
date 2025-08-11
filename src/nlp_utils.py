@@ -16,3 +16,14 @@ def parse_month(text: str):
     return None, None
 def month_key(dt_iso: str) -> str:
     return dt_iso[:7]
+
+
+def parse_last_n_months(text: str) -> int | None:
+    t = text.lower()
+    m = re.search(r'last\s+(\d{1,2})\s+months?', t)
+    if m:
+        n = int(m.group(1))
+        return max(1, min(24, n))  # cap 1..24
+    if 'last six months' in t or 'last 6 months' in t:
+        return 6
+    return None
