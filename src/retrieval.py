@@ -27,39 +27,60 @@ def _keyword_rank(query: str, docs: List[Dict[str,str]], top_k=12):
     return [d for sc, d in scored[:top_k] if sc > 0]
 
 def retrieve_transactions_context(query: str, txns: List[Transaction], top_k: int = 12) -> List[Dict[str, str]]:
-    # 1) Prefer FAISS
+    # init
+    docs: List[Dict[str, str]] = []
+
+    # 1) Try FAISS semantic search
     if has_faiss_index("tx_faiss") and os.getenv("OPENAI_API_KEY"):
         try:
-            return semantic_search_faiss(query, top_k=top_k, name="tx_faiss")
+            docs.extend(semantic_search_faiss(query, top_k=top_k, name="tx_faiss"))
         except Exception:
             pass
 
-q = query.lower()
-if "balance" in q or "ending balance" in q or "current balance" in q:
-    yr, mo = parse_month(q)
-    ym = f"{yr:04d}-{mo:02d}" if (yr and mo) else None
+    # 2) Balance-specific augmentation: ensure latest POSTED row(s) are present
+    q = query.lower()
+    if "balance" in q or "ending balance" in q or "current balance" in q:
+        yr, mo = parse_month(q)
+        ym = f"{yr:04d}-{mo:02d}" if (yr and mo) else None
 
-    pool = [
-        t for t in txns
-        if (t.transaction_status or "").upper() == "POSTED"
-        and (ym is None or month_key(t.transaction_date_time) == ym)
-    ]
-    if not pool:
         pool = [
             t for t in txns
-            if (ym is None or month_key(t.transaction_date_time) == ym)
+            if (t.transaction_status or "").upper() == "POSTED"
+               and (ym is None or month_key(t.transaction_date_time) == ym)
         ]
-    pool.sort(key=lambda x: (x.transaction_date_time or ""))
-    tail = pool[-3:]
-    for t in tail:
-        docs.append({"id": t.id, "text": _pack_text(t), "score": 1e9})
+        # If no POSTED in that period, relax status
+        if not pool:
+            pool = [
+                t for t in txns
+                if (ym is None or month_key(t.transaction_date_time) == ym)
+            ]
 
-    # 2) Fallback to NPZ if present
-    if has_index("tx_index") and os.getenv("OPENAI_API_KEY"):
+        pool.sort(key=lambda x: (x.transaction_date_time or ""))
+        tail = pool[-3:]  # most recent few
+        for t in tail:
+            docs.append({"id": t.id, "text": _pack_text(t), "score": 1e9})
+
+    # 3) Fallback to NPZ semantic search only if still empty
+    if not docs and has_index("tx_index") and os.getenv("OPENAI_API_KEY"):
         try:
-            return semantic_search(query, top_k=top_k, filename="tx_index")
+            docs.extend(semantic_search(query, top_k=top_k, filename="tx_index"))
         except Exception:
             pass
-    # 3) Keyword fallback
-    docs = [{"id": t.id, "text": _pack_text(t)} for t in txns]
-    return _keyword_rank(query, docs, top_k) or docs[:top_k]
+
+    # 4) Keyword fallback only if still empty
+    if not docs:
+        base = [{"id": t.id, "text": _pack_text(t)} for t in txns]
+        docs = _keyword_rank(query, base, top_k) or base[:top_k]
+
+    # 5) De-duplicate by id and keep highest scores first (respect top_k)
+    seen = set()
+    dedup: List[Dict[str, str]] = []
+    for d in sorted(docs, key=lambda x: x.get("score", 0.0), reverse=True):
+        if d["id"] in seen:
+            continue
+        seen.add(d["id"])
+        dedup.append(d)
+        if len(dedup) >= top_k:
+            break
+
+    return dedup
