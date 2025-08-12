@@ -2,7 +2,7 @@ import os, json
 from typing import Any, Dict, List, Tuple
 from .io import load_transactions
 from .retrieval import retrieve_transactions_context
-from .prompts import SYSTEM_PROMPT, render_user_prompt
+from .prompts import SYSTEM_PROMPT, render_user_prompt_latest
 from . import tools as tx_tools
 from .nlp_utils import parse_month, month_key, parse_last_n_months
 
@@ -124,7 +124,7 @@ def _maybe_handle_deterministic(query: str, transactions):
 
 def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transactions.json", chat_history: list | None = None):
     txns = load_transactions(transactions_path)
-    candidates = retrieve_candidate_txns(query, txns, top_k=30)
+    candidates = render_user_prompt_latest(query, txns, top_k=30)
 
     if not use_llm:
         return {"answer": "LLM disabled", "reasoning": "", "sources": [c["transactionId"] for c in candidates[:5]]}
@@ -135,7 +135,7 @@ def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transacti
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if chat_history:
         messages.extend([m for m in chat_history if m.get("role") in ("user", "assistant")][-8:])
-    messages.append({"role": "user", "content": render_user_prompt_with_candidates(query, candidates)})
+    messages.append({"role": "user", "content": render_user_prompt_latest(query, candidates)})
 
     resp = client.chat.completions.create(
         model=os.getenv("CHAT_MODEL", "meta-llama/Llama-3.3-70B-Instruct"),

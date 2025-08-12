@@ -1,6 +1,7 @@
 from typing import List, Dict
 import os
 from src.domain import load_glossary
+import json  # add if missing
 
 # src/prompts.py
 import json
@@ -15,15 +16,14 @@ def load_domain_glossary():
 
 DOMAIN_GLOSSARY = load_domain_glossary()
 
-LATEST_POLICY = """
-Selection policy for time words:
-- “latest”, “last”, “most recent” => choose the transaction with the MAX `transactionDateTime`.
-- Prefer POSTED over PENDING unless explicitly told otherwise.
+LATEST_TX_POLICY = """
+Latest Transaction policy:
+- “latest”, “most recent”, or “last transaction” means the row with the MAX `transactionDateTime` (ISO).
+- Prefer POSTED over PENDING unless the user explicitly says to include pending.
 - For “after my last payment”, filter to transactionType == "PAYMENT", then choose the MAX date.
-- For balance questions, answer with the chosen transaction's `endingBalance` directly.
-- Return JSON: { "answer": string, "reasoning": string, "sources": [transactionId] }.
+- When answering, describe the chosen row: type, date/time, amount (with currency), merchantName (if any), and endingBalance.
+- Return STRICT JSON: {"answer": string, "reasoning": string, "sources": [transactionId]}.
 """
-
 
 BALANCE_RULES = """ 
 When asked about 'current balance', 'ending balance', or 'balance in a specific month':
@@ -50,7 +50,7 @@ Answer:
 
 SYSTEM_PROMPT = f"""
 You are a banking assistant. Use ONLY provided candidate transactions and these rules.
-{LATEST_POLICY}
+{LATEST_TX_POLICY}
 """
 
 def build_system_prompt():
@@ -66,16 +66,18 @@ Rules:
 3. If info is missing, answer exactly: "Information not available in the provided data."
 4. Respond in STRICT JSON with keys: answer (string), reasoning (string), sources (string[] of transaction IDs used).
 {glossary_text}
-{LATEST_POLICY}
+{LATEST_TX_POLICY}
 """
 
 SYSTEM_PROMPT = build_system_prompt()
 
-def render_user_prompt_with_candidates(query: str, candidates: list[dict]) -> str:
+
+def render_user_prompt_latest(query: str, latest_tx: dict) -> str:
     return (
         "Question: " + query + "\n"
-        "CandidateTransactions:\n" +
-        json.dumps(candidates, ensure_ascii=False) + "\n\n"
-        "Follow the Selection policy and glossary. Reply in JSON format.\n"
-        + FEWSHOTS
+        "LatestTransaction:\n" + json.dumps(latest_tx, ensure_ascii=False) + "\n\n"
+        "Follow the Latest Transaction policy. "
+        "Write a one‑sentence natural‑language answer describing the transaction "
+        "(type, date/time, amount+currency, merchant if present, endingBalance). "
+        "Then return STRICT JSON with keys: answer, reasoning, sources (use the transactionId)."
     )
