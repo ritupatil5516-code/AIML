@@ -1,4 +1,6 @@
+import datetime
 import os, json
+import re
 from typing import Any, Dict, List, Tuple
 from .io import load_transactions
 from .retrieval import retrieve_transactions_context
@@ -8,6 +10,41 @@ from .nlp_utils import parse_month, month_key, parse_last_n_months
 
 USE_LLM_TOOLS = os.getenv('USE_LLM_TOOLS', 'true').lower() == 'true'
 
+MONTH_RE = re.compile(r"\b(20\d{2})-(0[1-9]|1[0-2])\b")
+YEAR_RE  = re.compile(r"\b(20\d{2})\b")
+
+def _fmt_month(dt: datetime) -> str: return f"{dt.year:04d}-{dt.month:02d}"
+def _last_month(dt: datetime) -> str:
+    y, m = dt.year, dt.month
+    return f"{y-1:04d}-12" if m == 1 else f"{y:04d}-{m-1:02d}"
+
+def infer_timeframe(query: str, now_dt: datetime) -> dict:
+    q = (query or "").lower()
+    m = MONTH_RE.search(q)
+    if m: return {"month": m.group(0)}
+    if "this month" in q or "current month" in q: return {"month": _fmt_month(now_dt)}
+    if "last month" in q or "previous month" in q: return {"month": _last_month(now_dt)}
+    yr, mo = parse_month(q)
+    if yr and mo: return {"month": f"{yr:04d}-{mo:02d}"}
+    if mo: return {"month": f"{now_dt.year:04d}-{mo:02d}"}
+    if "this year" in q or "current year" in q: return {"year": f"{now_dt.year:04d}"}
+    if "last year" in q or "previous year" in q: return {"year": f"{now_dt.year-1:04d}"}
+    y = YEAR_RE.search(q)
+    if y: return {"year": y.group(1)}
+    return {}
+
+def _normalize_time_args(args: dict, query: str) -> dict:
+    a = dict(args or {})
+    inferred = infer_timeframe(query, datetime.now(datetime.timezone.utc))
+    # prefer month if present
+    if inferred.get("month"):
+        a["month"] = inferred["month"]; a.pop("year", None)
+    elif inferred.get("year") and not a.get("month"):
+        a["year"] = inferred["year"]; a.pop("month", None)
+    # if both present, keep month only
+    if a.get("month"): a.pop("year", None)
+    return a
+
 def _tool_schema():
     return [
       {"type":"function","function":{"name":"filter_transactions","description":"Filter transactions by amount/type/status.","parameters":{"type":"object","properties":{"min_amount":{"type":"number"},"max_amount":{"type":"number"},"transaction_type":{"type":"string"},"merchant_name":{"type":"string"},"status":{"type":"string"}},"additionalProperties": False}}},
@@ -15,47 +52,43 @@ def _tool_schema():
       {"type":"function","function":{"name":"count_items","description":"Count items in an array.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object"}}},"required":["items"],"additionalProperties": False}}},
       {"type":"function","function":{"name":"get_transaction_by_id","description":"Get one transaction by ID.","parameters":{"type":"object","properties":{"txn_id":{"type":"string"}},"required":["txn_id"],"additionalProperties": False}}},
       {"type":"function","function":{"name":"explain_field","description":"Explain what a company-specific field means.","parameters":{"type":"object","properties":{"field_name":{"type":"string"}},"required":["field_name"],"additionalProperties": False}}},
-    {
-        "type": "function",
-        "function": {
-            "name": "sum_credits",
-            "description": "Return total credited (POSTED) amount across ALL transactions. Optional month=YYYY-MM.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "month": {"type": "string", "description": "Optional 'YYYY-MM' month scope"}
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "sum_debits",
-            "description": "Return total debited (POSTED) amount across ALL transactions. Optional month=YYYY-MM.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "month": {"type": "string", "description": "Optional 'YYYY-MM' month scope"}
-                }
-            }
-        }
-    }
+    {"type": "function", "function": {
+        "name": "sum_credits",
+        "description": "Total of POSTED credits. Accepts month='YYYY-MM' or year='YYYY'.",
+        "parameters": {"type": "object", "properties": {
+            "month": {"type": "string"}, "year": {"type": "string"}
+        }}
+    }},
+    {"type": "function", "function": {
+        "name": "sum_debits",
+        "description": "Total of POSTED debits. Accepts month='YYYY-MM' or year='YYYY'.",
+        "parameters": {"type": "object", "properties": {
+            "month": {"type": "string"}, "year": {"type": "string"}
+        }}
+    }},
+    {"type": "function", "function": {
+        "name": "sum_payments",
+        "description": "Total of POSTED PAYMENT transactions (by type). Accepts month/year.",
+        "parameters": {"type": "object", "properties": {
+            "month": {"type": "string"}, "year": {"type": "string"}
+        }}
+    }},
     ]
 
 def _call_tool(name: str, args: Dict[str, Any], state: Dict[str, Any]):
     tx = state["transactions"]
+    a = _normalize_time_args(args or {}, state.get("query", ""))
     if name == "filter_transactions": return tx_tools.filter_transactions(tx, **args)
     if name == "sum_amounts": return tx_tools.sum_amounts(args.get("items", []))
     if name == "count_items": return tx_tools.count_items(args.get("items", []))
     if name == "get_transaction_by_id": return tx_tools.get_transaction_by_id(tx, args.get("txn_id"))
     if name == "explain_field": return tx_tools.explain_field(args.get("field_name"))
     if name == "sum_credits":
-        month = (args or {}).get("month")
-        return tx_tools.sum_credits(state.get("transactions", []), month)
+        return tx_tools.sum_credits(tx, month=a.get("month"), year=a.get("year"))
     if name == "sum_debits":
-        month = (args or {}).get("month")
-        return tx_tools.sum_debits(state.get("transactions", []), month)
+        return tx_tools.sum_debits(tx, month=a.get("month"), year=a.get("year"))
+    if name == "sum_payments":
+        return tx_tools.sum_payments(tx, month=a.get("month"), year=a.get("year"))
     raise ValueError(f"Unknown tool: {name}")
 
 # Deterministic helpers
@@ -195,7 +228,7 @@ def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transacti
         for tc in msg.tool_calls[:4]:
             name = tc.function.name
             args = json.loads(tc.function.arguments or "{}")
-            result = _call_tool(name, args, {'transactions': transactions})
+            result = _call_tool(name, args, {'transactions': transactions,  "query": query })
             messages.append({"role":"tool","tool_call_id": tc.id, "content": json.dumps(result)})
         resp = client.chat.completions.create(**kwargs | {"messages": messages})
         msg = resp.choices[0].message

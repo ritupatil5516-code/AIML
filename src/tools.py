@@ -1,14 +1,14 @@
-from typing import List, Dict, Any
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Iterable
 from .models import Transaction
 from .domain import get_field_doc
-
 
 def _to_dict(i):
     if i is None:
         return {}
-    if hasattr(i, "model_dump"):                 # Pydantic v2
+    if hasattr(i, "model_dump"):        # Pydantic v2
         return i.model_dump(by_alias=True)
-    if hasattr(i, "dict"):                       # Pydantic v1
+    if hasattr(i, "dict"):              # Pydantic v1
         return i.dict(by_alias=True)
     if isinstance(i, dict):
         return i
@@ -19,65 +19,116 @@ def _to_dict(i):
             return {}
     return {}
 
-def sum_credits(transactions: Iterable, month: str | None = None) -> float:
-    """Total of all POSTED credit transactions across the dataset.
-       Credit rule: debitCreditIndicator == -1 OR amount > 0 (when indicator missing).
-       Optional month filter: 'YYYY-MM'."""
+def _parse_iso(dt_str: Optional[str]) -> Optional[datetime]:
+    if not dt_str or not isinstance(dt_str, str):
+        return None
+    s = dt_str.strip()
+    # tolerate trailing Z and fractional seconds
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        try:
+            return datetime.strptime(s.split(".")[0].replace("Z",""), "%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return None
+
+def _match_month_year(d: dict, month: Optional[str], year: Optional[str]) -> bool:
+    """month = 'YYYY-MM' or None, year = 'YYYY' or None."""
+    if not month and not year:
+        return True
+    dt = _parse_iso(d.get("transactionDateTime") or d.get("transaction_date_time"))
+    if not dt:
+        # last‑ditch substring fallback (handles well‑formed ISO strings)
+        s = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
+        if month and isinstance(s, str) and s.startswith(month):
+            return True
+        if year and isinstance(s, str) and s.startswith(year):
+            return True
+        return False
+    if month:
+        try:
+            y, m = month.split("-")
+            return dt.year == int(y) and dt.month == int(m)
+        except Exception:
+            return False
+    if year:
+        try:
+            return dt.year == int(year)
+        except Exception:
+            return False
+    return True
+
+def _is_posted(d: dict) -> bool:
+    return (d.get("transactionStatus") or d.get("transaction_status") or "").upper() == "POSTED"
+
+def _is_credit(d: dict) -> bool:
+    """Credit = debitCreditIndicator == -1 (string or int)."""
+    ind = d.get("debitCreditIndicator")
+    try:
+        return int(ind) == -1
+    except Exception:
+        return False
+
+def _is_debit(d: dict) -> bool:
+    """Debit = debitCreditIndicator == 1 (string or int)."""
+    ind = d.get("debitCreditIndicator")
+    try:
+        return int(ind) == 1
+    except Exception:
+        return False
+
+# ---------- totals ----------
+def sum_credits(transactions: Iterable, month: str | None = None, year: str | None = None) -> float:
+    """Total of POSTED credits. Credit strictly = debitCreditIndicator == -1."""
     total = 0.0
     for t in transactions:
         d = _to_dict(t)
-        status = (d.get("transactionStatus") or d.get("transaction_status") or "").upper()
-        if status != "POSTED":
+        if not _is_posted(d):
             continue
-
-        # credit / debit indicator
-        ind = d.get("debitCreditIndicator")
+        if not _match_month_year(d, month, year):
+            continue
+        if not _is_credit(d):
+            continue
         try:
-            ind = int(ind)
+            total += float(d.get("amount") or 0.0)
         except Exception:
-            ind = None
-
-        amt = float(d.get("amount") or 0.0)
-        is_credit = (ind == -1) or (ind is None and amt > 0.0)
-        if not is_credit:
-            continue
-
-        if month:
-            dt = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
-            if not (isinstance(dt, str) and dt[:7] == month):
-                continue
-
-        total += amt
+            pass
     return float(total)
 
-def sum_debits(transactions: Iterable, month: str | None = None) -> float:
-    """Total of all POSTED debit transactions across the dataset.
-       Debit rule: debitCreditIndicator == 1 OR amount < 0 (when indicator missing).
-       Optional month filter: 'YYYY-MM'."""
+def sum_debits(transactions: Iterable, month: str | None = None, year: str | None = None) -> float:
+    """Total of POSTED debits. Debit strictly = debitCreditIndicator == 1."""
     total = 0.0
     for t in transactions:
         d = _to_dict(t)
-        status = (d.get("transactionStatus") or d.get("transaction_status") or "").upper()
-        if status != "POSTED":
+        if not _is_posted(d):
             continue
-
-        ind = d.get("debitCreditIndicator")
+        if not _match_month_year(d, month, year):
+            continue
+        if not _is_debit(d):
+            continue
         try:
-            ind = int(ind)
+            # amounts may be positive; we sum their absolute value
+            amt = float(d.get("amount") or 0.0)
+            total += abs(amt)
         except Exception:
-            ind = None
+            pass
+    return float(total)
 
-        amt = float(d.get("amount") or 0.0)
-        is_debit = (ind == 1) or (ind is None and amt < 0.0)
-        if not is_debit:
+def sum_payments(transactions: Iterable, month: str | None = None, year: str | None = None) -> float:
+    """Total of POSTED PAYMENT transactions (by type). Use when business asks 'total payment ...'."""
+    total = 0.0
+    for t in transactions:
+        d = _to_dict(t)
+        if not _is_posted(d):
             continue
-
-        if month:
-            dt = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
-            if not (isinstance(dt, str) and dt[:7] == month):
-                continue
-
-        total += abs(amt) if amt < 0 else amt  # if negatives, normalize
+        if not _match_month_year(d, month, year):
+            continue
+        if (d.get("transactionType") or d.get("transaction_type") or "").upper() != "PAYMENT":
+            continue
+        try:
+            total += float(d.get("amount") or 0.0)
+        except Exception:
+            pass
     return float(total)
 
 def explain_field(field_name: str) -> dict | None:
@@ -113,58 +164,3 @@ def get_transaction_by_id(transactions: List[Transaction], txn_id: str) -> Dict[
         if (t.id or "") == (txn_id or ""):
             return {"transactionId": t.id, "amount": t.amount, "type": t.transaction_type, "date": t.transaction_date_time, "status": t.transaction_status, "currency": t.currency_code, "merchant": t.merchant_name}
     return None
-
-
-
-import json
-from typing import Iterable
-
-def _to_dict(i):
-    if i is None:
-        return {}
-    if hasattr(i, "model_dump"):
-        return i.model_dump(by_alias=True)
-    if hasattr(i, "dict"):
-        return i.dict(by_alias=True)
-    if isinstance(i, dict):
-        return i
-    if isinstance(i, str):
-        try:
-            return json.loads(i)
-        except Exception:
-            return {}
-    return {}
-
-def sum_amounts(items: Iterable) -> float:
-    total = 0.0
-    for i in items:
-        d = _to_dict(i)
-        try:
-            total += float(d.get("amount") or 0.0)
-        except Exception:
-            pass
-    return float(total)
-
-def sum_credits(transactions: Iterable, month: str | None = None) -> float:
-    """Sum all POSTED credits across dataset. Credit = debitCreditIndicator == -1 or amount > 0."""
-    total = 0.0
-    for t in transactions:
-        d = _to_dict(t)
-        status = (d.get("transactionStatus") or d.get("transaction_status") or "").upper()
-        if status != "POSTED":
-            continue
-        ind = d.get("debitCreditIndicator")
-        try:
-            ind = int(ind)
-        except Exception:
-            ind = None
-        amt = float(d.get("amount") or 0.0)
-        is_credit = (ind == -1) or (amt > 0)
-        if not is_credit:
-            continue
-        if month:
-            dt = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
-            if not (isinstance(dt, str) and dt[:7] == month):
-                continue
-        total += amt
-    return float(total)

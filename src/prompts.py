@@ -4,8 +4,10 @@ from src.domain import load_glossary
 
 CREDIT_DEBIT_POLICY = """
 Totals policy:
-- A CREDIT is POSTED with debitCreditIndicator == -1 (or amount > 0 if indicator missing).
-- A DEBIT is POSTED with debitCreditIndicator == 1 (or amount < 0 if indicator missing).
+ CREDIT total → call `sum_credits`. Do not manually add amounts.
+- DEBIT total → call `sum_debits`. Do not manually add amounts.
+- PAYMENT total (by type) → call `sum_payments`. Do not manually add amounts.
+- For “this month / last month / this year / last year”, do not guess dates; rely on runtime to infer month/year.
 - For “total credited / total deposits / sum of credits”, call tool `sum_credits` (optionally pass month='YYYY-MM').
 - For “total debited / total spends / sum of debits”, call tool `sum_debits` (optionally pass month='YYYY-MM').
 - Do NOT add amounts manually; rely on tools for totals. Return JSON {answer, reasoning, sources}.
