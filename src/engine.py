@@ -143,7 +143,7 @@ def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transacti
                 messages.append({"role": role, "content": content})
     messages.append({"role":"user","content": render_user_prompt(query, ctx)})
 
-    kwargs = {"model": os.getenv("CHAT_MODEL","meta-llama/Llama-3.3-70B-Instruct"), "messages": messages, "response_format":{"type":"json_object"}}
+    kwargs = {"model": os.getenv("CHAT_MODEL","meta-llama/Llama-3.3-70B-Instruct"), "messages": messages, "response_format":{"type":"json_object"}, "temperature": 0.1}
     if USE_LLM_TOOLS:
         kwargs["tools"] = _tool_schema()
         kwargs["tool_choice"] = "auto"

@@ -12,6 +12,7 @@ class Transaction(BaseModel):
     transaction_date_time: Optional[str] = Field(None, alias="transactionDateTime")
     currency_code: Optional[str] = Field(None, alias="currencyCode")
     merchant_name: Optional[str] = Field(None, alias="merchantName")
+    ending_balance: Optional[float] = Field(None, alias="endingBalance")
     @property
     def id(self) -> str:
         return self.transaction_id or ""

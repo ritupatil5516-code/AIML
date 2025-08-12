@@ -1,4 +1,15 @@
 
+BALANCE_RULES = """
+Balance policy:
+- “current/ending balance” = the `endingBalance` of the latest POSTED transaction.
+- If a month is mentioned, use the latest POSTED transaction within that month.
+- Do NOT compute balance by summing amounts; `endingBalance` already encodes it.
+- If no POSTED transaction exists for the requested period, reply:
+  "Information not available in the provided data."
+- Include the chosen transactionId in `sources`.
+"""
+
+
 BALANCE_RULES = """ 
 When asked about 'current balance', 'ending balance', or 'balance in a specific month':
 1. Always use the `endingBalance` field from the most recent POSTED transaction.
@@ -37,7 +48,7 @@ if _use_gloss:
     rule_lines = [f"- {k}: {v}" for k,v in rules.items()]
     _g_text = "\n".join(["Company Domain Glossary:", *lines, "Business Rules:", *rule_lines])
 
-SYSTEM_PROMPT = f"""You are a banking assistant specialized in TRANSACTIONS ONLY.
+SYSTEM_PROMPT = f"""{BALANCE_RULES}\nYou are a banking assistant specialized in TRANSACTIONS ONLY.
 Rules:
 1. Use ONLY the provided transaction context or tool results.
 2. Prefer calling tools for math/filters; do not guess.
