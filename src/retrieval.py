@@ -1,5 +1,6 @@
 import os
 from typing import List, Dict
+from datetime import datetime
 from .models import Transaction
 from .nlp_utils import parse_month, month_key
 from .semantic_index import has_index, semantic_search
@@ -26,18 +27,31 @@ def _keyword_rank(query: str, docs: List[Dict[str,str]], top_k=12):
     scored.sort(key=lambda x: x[0], reverse=True)
     return [d for sc, d in scored[:top_k] if sc > 0]
 
+def _dt_key(iso: str) -> datetime:
+    if not iso:
+        return datetime.min
+    try:
+        # Handle trailing Z (UTC)
+        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except Exception:
+        # Last resort: strip fractional seconds or fall back
+        try:
+            return datetime.strptime(iso.split(".")[0].replace("Z",""), "%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return datetime.min
+
 def retrieve_transactions_context(query: str, txns: List[Transaction], top_k: int = 12) -> List[Dict[str, str]]:
     # init
     docs: List[Dict[str, str]] = []
 
-    # 1) Try FAISS semantic search
+    # 1) FAISS first
     if has_faiss_index("tx_faiss") and os.getenv("OPENAI_API_KEY"):
         try:
             docs.extend(semantic_search_faiss(query, top_k=top_k, name="tx_faiss"))
         except Exception:
             pass
 
-    # 2) Balance-specific augmentation: ensure latest POSTED row(s) are present
+    # 2) Balance-specific: append the single latest POSTED (or latest in month)
     q = query.lower()
     if "balance" in q or "ending balance" in q or "current balance" in q:
         yr, mo = parse_month(q)
@@ -46,21 +60,18 @@ def retrieve_transactions_context(query: str, txns: List[Transaction], top_k: in
         pool = [
             t for t in txns
             if (t.transaction_status or "").upper() == "POSTED"
-               and (ym is None or month_key(t.transaction_date_time) == ym)
+            and (ym is None or month_key(t.transaction_date_time) == ym)
         ]
-        # If no POSTED in that period, relax status
+        # if none POSTED in that period, relax status
         if not pool:
-            pool = [
-                t for t in txns
-                if (ym is None or month_key(t.transaction_date_time) == ym)
-            ]
+            pool = [t for t in txns if (ym is None or month_key(t.transaction_date_time) == ym)]
 
-        pool.sort(key=lambda x: (x.transaction_date_time or ""))
-        tail = pool[-3:]  # most recent few
-        for t in tail:
-            docs.append({"id": t.id, "text": _pack_text(t), "score": 1e9})
+        if pool:
+            latest = max(pool, key=lambda x: _dt_key(x.transaction_date_time))
+            # Pin latest to the very top with a huge score
+            docs.append({"id": latest.id, "text": _pack_text(latest), "score": 1e12})
 
-    # 3) Fallback to NPZ semantic search only if still empty
+    # 3) NPZ fallback only if still empty
     if not docs and has_index("tx_index") and os.getenv("OPENAI_API_KEY"):
         try:
             docs.extend(semantic_search(query, top_k=top_k, filename="tx_index"))
@@ -72,7 +83,7 @@ def retrieve_transactions_context(query: str, txns: List[Transaction], top_k: in
         base = [{"id": t.id, "text": _pack_text(t)} for t in txns]
         docs = _keyword_rank(query, base, top_k) or base[:top_k]
 
-    # 5) De-duplicate by id and keep highest scores first (respect top_k)
+    # 5) De-dup by id, keep highest score first, respect top_k
     seen = set()
     dedup: List[Dict[str, str]] = []
     for d in sorted(docs, key=lambda x: x.get("score", 0.0), reverse=True):
