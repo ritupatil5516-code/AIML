@@ -53,16 +53,16 @@ def retrieve_transactions_context(query: str, txns: list, top_k: int = 12):
 
     # === Pin latest POSTED payment if asking about payment ===
     if "payment" in q_lower:
-        payments = [t for t in txns if (t.get("transactionType") == "PAYMENT" and t.get("transactionStatus") == "POSTED")]
+        payments = [t for t in txns if (t.transactionType == "PAYMENT" and t.transactionStatus == "POSTED")]
         if payments:
-            latest_payment = max(payments, key=lambda x: _parse_dt(x.get("transactionDateTime")))
-            docs.append({"id": latest_payment["transactionId"], "text": _pack_text(latest_payment), "score": 1e12})
+            latest_payment = max(payments, key=lambda x: _parse_dt(t.transactionDateTime))
+            docs.append({"id": latest_payment.transactionId, "text": _pack_text(latest_payment), "score": 1e12})
 
     # === Pin latest POSTED txn for ending balance queries ===
     if "ending balance" in q_lower or "current balance" in q_lower:
-        posted = [t for t in txns if t.get("transactionStatus") == "POSTED"]
+        posted = [t for t in txns if t.transactionStatus == "POSTED"]
         if posted:
-            latest_txn = max(posted, key=lambda x: _parse_dt(x.get("transactionDateTime")))
-            docs.append({"id": latest_txn["transactionId"], "text": _pack_text(latest_txn), "score": 1e11})
+            latest_txn = max(posted, key=lambda x: _parse_dt(t.transactionDateTime))
+            docs.append({"id": latest_txn.transactionId, "text": _pack_text(latest_txn), "score": 1e11})
 
     return docs
