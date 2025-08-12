@@ -66,3 +66,32 @@ Below is a list of example questions you can ask the TX Copilot (Semantic RAG) t
 28. Which month had the highest total spend last year?
 29. How many recurring transactions do I have?
 30. What is the total amount of payments made toward my account this year?
+
+## Transactions (spend, credits, payments)
+	•	What is the total amount credited this year?
+	•	How much did I spend in July 2025?
+	•	Total purchase amount in Aug 2025.
+	•	What’s my largest transaction this year?
+	•	List all transactions over $500 in 2025.
+	•	When was my last payment and how much?
+	•	Show transactions for merchant “Southwest” in 2025.
+	•	How much did I spend on FUEL in 2023?
+	•	Sum of credits in 2023-09.
+	•	Show all transactions between 2025-07-01 and 2025-07-31.
+
+## Accounts (balances, due amounts, flags)
+	•	What is my current balance?
+	•	What is my available credit and credit limit for account ending 0269?
+	•	What is my minimum due and payment due date?
+	•	Which accounts are PAST_DUE or OVERDUE?
+	•	Which accounts have the BLOCKED_SPEND flag?
+	•	Show the latest account summary (newest lastUpdatedDate).
+
+## Mixed (TX + Accounts)
+	•	For account ending 0269, list all July 2025 transactions.
+	•	Across all accounts, how much have I spent in USD this year?
+	•	List overdue accounts with their totalBalance and paymentDueDate.
+	•	What is my total credit limit across all accounts?
+	•	After my last payment, what was the ending balance of the next posted transaction?
+
+⸻
