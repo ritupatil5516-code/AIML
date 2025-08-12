@@ -1,3 +1,28 @@
+
+BALANCE_RULES = """ 
+When asked about 'current balance', 'ending balance', or 'balance in a specific month':
+1. Always use the `endingBalance` field from the most recent POSTED transaction.
+2. Ignore transactions with status 'PENDING'.
+3. If a month/year is given, use the most recent POSTED transaction in that month.
+4. Do not sum amounts to compute balance — balance is directly given in `endingBalance`.
+5. If no POSTED transaction exists for that period, respond with: "Information not available in the provided data."
+"""
+
+FEW_SHOTS = """
+Example 1
+Q: What is my current balance?
+A: {"answer": "1543.22", "reasoning": "Used endingBalance from latest POSTED transaction", "sources": ["t-100"]}
+
+Example 2
+Q: Ending balance for Aug 2025?
+A: {"answer": "980.50", "reasoning": "Used endingBalance from latest POSTED in 2025-08", "sources": ["t-200"]}
+
+Example 3
+Q: What is my balance now?
+A: {"answer": "1192.45", "reasoning": "Used endingBalance from latest POSTED transaction; ignored pending", "sources": ["t-301"]}
+"""
+
+
 from typing import List, Dict
 import os
 from .domain import load_glossary
