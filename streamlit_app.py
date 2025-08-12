@@ -1,6 +1,7 @@
 import os, json, streamlit as st
 from src.engine import ask_tx
-from src.io import load_transactions
+from src.engine_llmfirst_acct import ask_llm_first_accounts
+from src.io import load_transactions, load_account_summaries
 from src.faiss_index import build_faiss_index
 
 st.set_page_config(page_title="TX Copilot (FAISS Flat)", page_icon="💳")
@@ -68,6 +69,8 @@ if q:
                 from src.agent_llamaindex import ask_agent
                 res = ask_agent(q)
             else:
-                res = ask_tx(q, use_llm=use_llm, chat_history=history)
+                transactions = load_transactions("data/transactions.json")
+                accounts = load_account_summaries("data/account-summary.json")
+                res = ask_llm_first_accounts(q, transactions, accounts, chat_history=st.session_state.get("history"))
             st.json(res)
             st.session_state.messages.append({"role":"assistant","content": res, "is_json": True})
