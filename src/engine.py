@@ -14,7 +14,33 @@ def _tool_schema():
       {"type":"function","function":{"name":"sum_amounts","description":"Sum the 'amount' field of items.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"transactionId":{"type":"string"},"amount":{"type":"number"}},"required":["transactionId","amount"],"additionalProperties": True}}},"required":["items"],"additionalProperties": False}}},
       {"type":"function","function":{"name":"count_items","description":"Count items in an array.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object"}}},"required":["items"],"additionalProperties": False}}},
       {"type":"function","function":{"name":"get_transaction_by_id","description":"Get one transaction by ID.","parameters":{"type":"object","properties":{"txn_id":{"type":"string"}},"required":["txn_id"],"additionalProperties": False}}},
-      {"type":"function","function":{"name":"explain_field","description":"Explain what a company-specific field means.","parameters":{"type":"object","properties":{"field_name":{"type":"string"}},"required":["field_name"],"additionalProperties": False}}}
+      {"type":"function","function":{"name":"explain_field","description":"Explain what a company-specific field means.","parameters":{"type":"object","properties":{"field_name":{"type":"string"}},"required":["field_name"],"additionalProperties": False}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "sum_credits",
+            "description": "Return total credited (POSTED) amount across ALL transactions. Optional month=YYYY-MM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "month": {"type": "string", "description": "Optional 'YYYY-MM' month scope"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sum_debits",
+            "description": "Return total debited (POSTED) amount across ALL transactions. Optional month=YYYY-MM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "month": {"type": "string", "description": "Optional 'YYYY-MM' month scope"}
+                }
+            }
+        }
+    }
     ]
 
 def _call_tool(name: str, args: Dict[str, Any], state: Dict[str, Any]):
@@ -24,6 +50,12 @@ def _call_tool(name: str, args: Dict[str, Any], state: Dict[str, Any]):
     if name == "count_items": return tx_tools.count_items(args.get("items", []))
     if name == "get_transaction_by_id": return tx_tools.get_transaction_by_id(tx, args.get("txn_id"))
     if name == "explain_field": return tx_tools.explain_field(args.get("field_name"))
+    if name == "sum_credits":
+        month = (args or {}).get("month")
+        return tx_tools.sum_credits(state.get("transactions", []), month)
+    if name == "sum_debits":
+        month = (args or {}).get("month")
+        return tx_tools.sum_debits(state.get("transactions", []), month)
     raise ValueError(f"Unknown tool: {name}")
 
 # Deterministic helpers
@@ -147,8 +179,15 @@ def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transacti
     if USE_LLM_TOOLS:
         kwargs["tools"] = _tool_schema()
         kwargs["tool_choice"] = "auto"
-    resp = client.chat.completions.create(**kwargs)
-
+    #resp = client.chat.completions.create(**kwargs)
+    resp = client.chat.completions.create(
+        model=os.getenv("CHAT_MODEL", "meta-llama/Llama-3.3-70B-Instruct"),
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+        tools=_tool_schema(),
+        tool_choice="auto",
+    )
     msg = resp.choices[0].message
     if getattr(msg, "tool_calls", None):
         messages.append({"role":"assistant","content": msg.content or "", "tool_calls": msg.tool_calls})

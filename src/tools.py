@@ -2,6 +2,84 @@ from typing import List, Dict, Any
 from .models import Transaction
 from .domain import get_field_doc
 
+
+def _to_dict(i):
+    if i is None:
+        return {}
+    if hasattr(i, "model_dump"):                 # Pydantic v2
+        return i.model_dump(by_alias=True)
+    if hasattr(i, "dict"):                       # Pydantic v1
+        return i.dict(by_alias=True)
+    if isinstance(i, dict):
+        return i
+    if isinstance(i, str):
+        try:
+            return json.loads(i)
+        except Exception:
+            return {}
+    return {}
+
+def sum_credits(transactions: Iterable, month: str | None = None) -> float:
+    """Total of all POSTED credit transactions across the dataset.
+       Credit rule: debitCreditIndicator == -1 OR amount > 0 (when indicator missing).
+       Optional month filter: 'YYYY-MM'."""
+    total = 0.0
+    for t in transactions:
+        d = _to_dict(t)
+        status = (d.get("transactionStatus") or d.get("transaction_status") or "").upper()
+        if status != "POSTED":
+            continue
+
+        # credit / debit indicator
+        ind = d.get("debitCreditIndicator")
+        try:
+            ind = int(ind)
+        except Exception:
+            ind = None
+
+        amt = float(d.get("amount") or 0.0)
+        is_credit = (ind == -1) or (ind is None and amt > 0.0)
+        if not is_credit:
+            continue
+
+        if month:
+            dt = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
+            if not (isinstance(dt, str) and dt[:7] == month):
+                continue
+
+        total += amt
+    return float(total)
+
+def sum_debits(transactions: Iterable, month: str | None = None) -> float:
+    """Total of all POSTED debit transactions across the dataset.
+       Debit rule: debitCreditIndicator == 1 OR amount < 0 (when indicator missing).
+       Optional month filter: 'YYYY-MM'."""
+    total = 0.0
+    for t in transactions:
+        d = _to_dict(t)
+        status = (d.get("transactionStatus") or d.get("transaction_status") or "").upper()
+        if status != "POSTED":
+            continue
+
+        ind = d.get("debitCreditIndicator")
+        try:
+            ind = int(ind)
+        except Exception:
+            ind = None
+
+        amt = float(d.get("amount") or 0.0)
+        is_debit = (ind == 1) or (ind is None and amt < 0.0)
+        if not is_debit:
+            continue
+
+        if month:
+            dt = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
+            if not (isinstance(dt, str) and dt[:7] == month):
+                continue
+
+        total += abs(amt) if amt < 0 else amt  # if negatives, normalize
+    return float(total)
+
 def explain_field(field_name: str) -> dict | None:
     doc = get_field_doc(field_name)
     if not doc:

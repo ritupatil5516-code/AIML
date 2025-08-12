@@ -1,24 +1,20 @@
+from typing import List, Dict
+import os
+from src.domain import load_glossary
 
 CREDIT_DEBIT_POLICY = """
-- A credit is any POSTED transaction where debitCreditIndicator == -1 (or amount > 0 when missing).
-- For questions like "total credited", "sum of credits", or "total deposits", call the tool `sum_credits` (optionally pass month='YYYY-MM').
-- Do not add amounts manually; rely on the tool for totals.
+Totals policy:
+- A CREDIT is POSTED with debitCreditIndicator == -1 (or amount > 0 if indicator missing).
+- A DEBIT is POSTED with debitCreditIndicator == 1 (or amount < 0 if indicator missing).
+- For “total credited / total deposits / sum of credits”, call tool `sum_credits` (optionally pass month='YYYY-MM').
+- For “total debited / total spends / sum of debits”, call tool `sum_debits` (optionally pass month='YYYY-MM').
+- Do NOT add amounts manually; rely on tools for totals. Return JSON {answer, reasoning, sources}.
 """
 
 
 BALANCE_RULES = """
 Balance policy:
-- “current/ending balance” = the `endingBalance` of the latest POSTED transaction.
-- If a month is mentioned, use the latest POSTED transaction within that month.
-- Do NOT compute balance by summing amounts; `endingBalance` already encodes it.
-- If no POSTED transaction exists for the requested period, reply:
-  "Information not available in the provided data."
-- Include the chosen transactionId in `sources`.
-"""
-
-
-BALANCE_RULES = """ 
-When asked about 'current balance', 'ending balance', or 'balance in a specific month':
+When asked about 'current balance', 'ending balance', 'account balance' or 'balance in a specific month':
 1. Always use the `endingBalance` field from the most recent POSTED transaction.
 2. Ignore transactions with status 'PENDING'.
 3. If a month/year is given, use the most recent POSTED transaction in that month.
@@ -40,10 +36,6 @@ Q: What is my balance now?
 A: {"answer": "1192.45", "reasoning": "Used endingBalance from latest POSTED transaction; ignored pending", "sources": ["t-301"]}
 """
 
-
-from typing import List, Dict
-import os
-from .domain import load_glossary
 
 _g = load_glossary()
 _use_gloss = os.getenv("USE_GLOSSARY_IN_PROMPT","true").lower()=="true"
