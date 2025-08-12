@@ -1,12 +1,27 @@
+from typing import List, Dict
+import os
+from src.domain import load_glossary
 
-BALANCE_RULES = """
-Balance policy:
-- “current/ending balance” = the `endingBalance` of the latest POSTED transaction.
-- If a month is mentioned, use the latest POSTED transaction within that month.
-- Do NOT compute balance by summing amounts; `endingBalance` already encodes it.
-- If no POSTED transaction exists for the requested period, reply:
-  "Information not available in the provided data."
-- Include the chosen transactionId in `sources`.
+# src/prompts.py
+import json
+import os
+
+def load_domain_glossary():
+    glossary_path = os.getenv("DOMAIN_GLOSSARY_PATH", "glossary.json")
+    if os.path.exists(glossary_path):
+        with open(glossary_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+DOMAIN_GLOSSARY = load_domain_glossary()
+
+LATEST_POLICY = """
+Selection policy for time words:
+- “latest”, “last”, “most recent” => choose the transaction with the MAX `transactionDateTime`.
+- Prefer POSTED over PENDING unless explicitly told otherwise.
+- For “after my last payment”, filter to transactionType == "PAYMENT", then choose the MAX date.
+- For balance questions, answer with the chosen transaction's `endingBalance` directly.
+- Return JSON: { "answer": string, "reasoning": string, "sources": [transactionId] }.
 """
 
 
@@ -19,48 +34,48 @@ When asked about 'current balance', 'ending balance', or 'balance in a specific 
 5. If no POSTED transaction exists for that period, respond with: "Information not available in the provided data."
 """
 
-FEW_SHOTS = """
-Example 1
-Q: What is my current balance?
-A: {"answer": "1543.22", "reasoning": "Used endingBalance from latest POSTED transaction", "sources": ["t-100"]}
+FEWSHOTS = """
+Example A
+Q: What is my latest transaction?
+Candidates: [{"transactionId":"t1","transactionDateTime":"2025-07-01T12:00:00Z"}, {"transactionId":"t2","transactionDateTime":"2025-08-03T09:00:00Z"}]
+Answer:
+{"answer":"(describe t2)","reasoning":"Picked max transactionDateTime = 2025-08-03T09:00:00Z","sources":["t2"]}
 
-Example 2
-Q: Ending balance for Aug 2025?
-A: {"answer": "980.50", "reasoning": "Used endingBalance from latest POSTED in 2025-08", "sources": ["t-200"]}
-
-Example 3
-Q: What is my balance now?
-A: {"answer": "1192.45", "reasoning": "Used endingBalance from latest POSTED transaction; ignored pending", "sources": ["t-301"]}
+Example B
+Q: After my last payment, what was the balance?
+Candidates: [{"transactionId":"p1","transactionType":"PAYMENT","transactionStatus":"POSTED","transactionDateTime":"2025-08-10T10:00:00Z","endingBalance":501.64}, {"transactionId":"x2","transactionType":"PURCHASE","transactionStatus":"POSTED","transactionDateTime":"2025-08-11T18:00:00Z"}]
+Answer:
+{"answer":"501.64","reasoning":"Filtered to PAYMENT, picked latest by date (p1) and used its endingBalance","sources":["p1"]}
 """
 
+SYSTEM_PROMPT = f"""
+You are a banking assistant. Use ONLY provided candidate transactions and these rules.
+{LATEST_POLICY}
+"""
 
-from typing import List, Dict
-import os
-from .domain import load_glossary
-
-_g = load_glossary()
-_use_gloss = os.getenv("USE_GLOSSARY_IN_PROMPT","true").lower()=="true"
-_g_text = ""
-if _use_gloss:
-    fields = _g.get("fields", {})
-    lines = [f"- {k}: {v.get('description','')}" for k,v in fields.items()]
-    rules = _g.get("business_rules", {})
-    rule_lines = [f"- {k}: {v}" for k,v in rules.items()]
-    _g_text = "\n".join(["Company Domain Glossary:", *lines, "Business Rules:", *rule_lines])
-
-SYSTEM_PROMPT = f"""{BALANCE_RULES}\nYou are a banking assistant specialized in TRANSACTIONS ONLY.
+def build_system_prompt():
+    glossary_text = ""
+    if DOMAIN_GLOSSARY:
+        glossary_text = "Domain Glossary:\n" + json.dumps(DOMAIN_GLOSSARY, indent=2) + "\n\n"
+    return f"""
+    {BALANCE_RULES}\nY
+You are a banking assistant specialized in TRANSACTIONS ONLY.
 Rules:
 1. Use ONLY the provided transaction context or tool results.
 2. Prefer calling tools for math/filters; do not guess.
 3. If info is missing, answer exactly: "Information not available in the provided data."
 4. Respond in STRICT JSON with keys: answer (string), reasoning (string), sources (string[] of transaction IDs used).
-
-{{_g_text}}
+{glossary_text}
+{LATEST_POLICY}
 """
 
-def render_user_prompt(query: str, context_docs: List[Dict[str, str]]) -> str:
-    ctx = "\n".join([f"[{d['id']}] {d['text']}" for d in context_docs])
-    return f"""Question: {query}
-Context (transactions only):
-{ctx}
-Reply in STRICT JSON with keys: answer, reasoning, sources."""
+SYSTEM_PROMPT = build_system_prompt()
+
+def render_user_prompt_with_candidates(query: str, candidates: list[dict]) -> str:
+    return (
+        "Question: " + query + "\n"
+        "CandidateTransactions:\n" +
+        json.dumps(candidates, ensure_ascii=False) + "\n\n"
+        "Follow the Selection policy and glossary. Reply in JSON format.\n"
+        + FEWSHOTS
+    )

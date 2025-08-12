@@ -123,6 +123,35 @@ def _maybe_handle_deterministic(query: str, transactions):
     return None
 
 def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transactions.json", chat_history: list | None = None):
+    txns = load_transactions(transactions_path)
+    candidates = retrieve_candidate_txns(query, txns, top_k=30)
+
+    if not use_llm:
+        return {"answer": "LLM disabled", "reasoning": "", "sources": [c["transactionId"] for c in candidates[:5]]}
+
+    from openai import OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"),
+                    base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE"))
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if chat_history:
+        messages.extend([m for m in chat_history if m.get("role") in ("user", "assistant")][-8:])
+    messages.append({"role": "user", "content": render_user_prompt_with_candidates(query, candidates)})
+
+    resp = client.chat.completions.create(
+        model=os.getenv("CHAT_MODEL", "meta-llama/Llama-3.3-70B-Instruct"),
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.1,
+    )
+    msg = resp.choices[0].message.content
+    try:
+        return json.loads(msg)
+    except Exception:
+        return {"answer": msg, "reasoning": "LLM returned non-JSON",
+                "sources": [c["transactionId"] for c in candidates[:3]]}
+
+    """
+    
     transactions = load_transactions(transactions_path)
     det = _maybe_handle_deterministic(query, transactions)
     if det is not None: return det
@@ -165,3 +194,4 @@ def ask_tx(query: str, use_llm: bool = True, transactions_path: str = "transacti
         return json.loads(msg.content)
     except Exception:
         return {"answer": msg.content, "reasoning":"", "sources":[d["id"] for d in ctx]}
+"""
