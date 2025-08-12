@@ -24,8 +24,33 @@ def filter_transactions(transactions: List[Transaction],
         res.append({"transactionId": t.id, "amount": t.amount, "type": t.transaction_type, "date": t.transaction_date_time})
     return res
 
-def sum_amounts(items: List[Dict[str, Any]]) -> float:
-    return float(sum((i.get("amount") or 0.0) for i in items))
+def sum_amounts(items):
+    total = 0.0
+    for i in items:
+        if not i:
+            continue
+        # If it's a Pydantic model, turn it into a dict
+        if hasattr(i, "model_dump"):
+            data = i.model_dump()
+        elif hasattr(i, "dict"):
+            data = i.dict()
+        elif isinstance(i, str):
+            import json
+            try:
+                data = json.loads(i)
+            except Exception:
+                # string is not JSON, skip it
+                continue
+        elif isinstance(i, dict):
+            data = i
+        else:
+            continue
+
+        try:
+            total += float(data.get("amount") or 0.0)
+        except Exception:
+            pass
+    return total
 
 def count_items(items: List[Dict[str, Any]]) -> int:
     return int(len(items))
