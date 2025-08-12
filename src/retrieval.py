@@ -27,71 +27,42 @@ def _keyword_rank(query: str, docs: List[Dict[str,str]], top_k=12):
     scored.sort(key=lambda x: x[0], reverse=True)
     return [d for sc, d in scored[:top_k] if sc > 0]
 
-def _dt_key(iso: str) -> datetime:
-    if not iso:
+
+def _parse_dt(dt_str):
+    if not dt_str:
         return datetime.min
     try:
-        # Handle trailing Z (UTC)
-        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
     except Exception:
-        # Last resort: strip fractional seconds or fall back
         try:
-            return datetime.strptime(iso.split(".")[0].replace("Z",""), "%Y-%m-%dT%H:%M:%S")
+            return datetime.strptime(dt_str.split(".")[0].replace("Z",""), "%Y-%m-%dT%H:%M:%S")
         except Exception:
             return datetime.min
 
-def retrieve_transactions_context(query: str, txns: List[Transaction], top_k: int = 12) -> List[Dict[str, str]]:
-    # init
-    docs: List[Dict[str, str]] = []
+def retrieve_transactions_context(query: str, txns: list, top_k: int = 12):
+    docs = []
 
-    # 1) FAISS first
-    if has_faiss_index("tx_faiss") and os.getenv("OPENAI_API_KEY"):
-        try:
+    q_lower = query.lower()
+
+    # === FAISS or existing semantic search ===
+    try:
+        if has_faiss_index("tx_faiss") and os.getenv("OPENAI_API_KEY"):
             docs.extend(semantic_search_faiss(query, top_k=top_k, name="tx_faiss"))
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # 2) Balance-specific: append the single latest POSTED (or latest in month)
-    q = query.lower()
-    if "balance" in q or "ending balance" in q or "current balance" in q:
-        yr, mo = parse_month(q)
-        ym = f"{yr:04d}-{mo:02d}" if (yr and mo) else None
+    # === Pin latest POSTED payment if asking about payment ===
+    if "payment" in q_lower:
+        payments = [t for t in txns if (t.get("transactionType") == "PAYMENT" and t.get("transactionStatus") == "POSTED")]
+        if payments:
+            latest_payment = max(payments, key=lambda x: _parse_dt(x.get("transactionDateTime")))
+            docs.append({"id": latest_payment["transactionId"], "text": _pack_text(latest_payment), "score": 1e12})
 
-        pool = [
-            t for t in txns
-            if (t.transaction_status or "").upper() == "POSTED"
-            and (ym is None or month_key(t.transaction_date_time) == ym)
-        ]
-        # if none POSTED in that period, relax status
-        if not pool:
-            pool = [t for t in txns if (ym is None or month_key(t.transaction_date_time) == ym)]
+    # === Pin latest POSTED txn for ending balance queries ===
+    if "ending balance" in q_lower or "current balance" in q_lower:
+        posted = [t for t in txns if t.get("transactionStatus") == "POSTED"]
+        if posted:
+            latest_txn = max(posted, key=lambda x: _parse_dt(x.get("transactionDateTime")))
+            docs.append({"id": latest_txn["transactionId"], "text": _pack_text(latest_txn), "score": 1e11})
 
-        if pool:
-            latest = max(pool, key=lambda x: _dt_key(x.transaction_date_time))
-            # Pin latest to the very top with a huge score
-            docs.append({"id": latest.id, "text": _pack_text(latest), "score": 1e12})
-
-    # 3) NPZ fallback only if still empty
-    if not docs and has_index("tx_index") and os.getenv("OPENAI_API_KEY"):
-        try:
-            docs.extend(semantic_search(query, top_k=top_k, filename="tx_index"))
-        except Exception:
-            pass
-
-    # 4) Keyword fallback only if still empty
-    if not docs:
-        base = [{"id": t.id, "text": _pack_text(t)} for t in txns]
-        docs = _keyword_rank(query, base, top_k) or base[:top_k]
-
-    # 5) De-dup by id, keep highest score first, respect top_k
-    seen = set()
-    dedup: List[Dict[str, str]] = []
-    for d in sorted(docs, key=lambda x: x.get("score", 0.0), reverse=True):
-        if d["id"] in seen:
-            continue
-        seen.add(d["id"])
-        dedup.append(d)
-        if len(dedup) >= top_k:
-            break
-
-    return dedup
+    return docs
