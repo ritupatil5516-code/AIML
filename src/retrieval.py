@@ -1,6 +1,5 @@
 import os
 from typing import List, Dict
-from datetime import datetime
 from .models import Transaction
 from .nlp_utils import parse_month, month_key
 from .semantic_index import has_index, semantic_search
@@ -17,20 +16,7 @@ def _pack_text(t: Transaction) -> str:
         f"merchant={t.merchant_name or ''} | accountId={t.account_id}"
     )
 
-def _pack_json(t: Transaction) -> Dict[str, object]:
-    return {
-        "transactionId": t.id,
-        "transactionType": t.transaction_type,
-        "transactionStatus": t.transaction_status,
-        "transactionDateTime": t.transaction_date_time,
-        "amount": t.amount,
-        "endingBalance": getattr(t, "ending_balance", None),
-        "currencyCode": t.currency_code,
-        "merchantName": t.merchant_name,
-        "accountId": t.account_id,
-    }
-
-def _keyword_rank(query: str, docs: List[Dict[str, str]], top_k: int = 12) -> List[Dict[str, str]]:
+def _keyword_rank(query: str, docs: List[Dict[str,str]], top_k=12):
     q = query.lower().split()
     scored = []
     for d in docs:
@@ -40,54 +26,40 @@ def _keyword_rank(query: str, docs: List[Dict[str, str]], top_k: int = 12) -> Li
     scored.sort(key=lambda x: x[0], reverse=True)
     return [d for sc, d in scored[:top_k] if sc > 0]
 
-def _dt_key(iso: str | None) -> datetime:
-    if not iso:
-        return datetime.min
-    try:
-        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    except Exception:
-        try:
-            return datetime.strptime(iso.split(".")[0].replace("Z",""), "%Y-%m-%dT%H:%M:%S")
-        except Exception:
-            return datetime.min
-
-def retrieve_candidate_txns(query: str, txns: List[Transaction], top_k: int = 30) -> List[Dict[str, object]]:
-    """
-    LLM-driven RAG: return structured candidate transactions that the LLM can reason over.
-    - Try FAISS to get semantically similar ids.
-    - Map back to Transaction objects and pack to JSON dicts.
-    - Also include a small tail of the chronologically most recent POSTED transactions
-      (just to guarantee recency is visible; we do NOT compute answers here).
-    """
-    by_id = {t.id: t for t in txns}
-    candidates: List[Dict[str, object]] = []
-
-    # 1) FAISS semantic hits → map to txns
+def retrieve_transactions_context(query: str, txns: List[Transaction], top_k: int = 12) -> List[Dict[str, str]]:
+    # 1) Prefer FAISS
     if has_faiss_index("tx_faiss") and os.getenv("OPENAI_API_KEY"):
         try:
-            hits = semantic_search_faiss(query, top_k=top_k, name="tx_faiss")
-            for h in hits:
-                t = by_id.get(h.get("id"))
-                if t:
-                    candidates.append(_pack_json(t))
+            return semantic_search_faiss(query, top_k=top_k, name="tx_faiss")
         except Exception:
             pass
 
-    # 2) Append last ~10 POSTED transactions (LLM decides what “latest” means)
-    posted = [t for t in txns if (t.transaction_status or "").upper() == "POSTED"]
-    posted.sort(key=lambda x: (x.transaction_date_time or ""))
-    for t in posted[-10:]:
-        candidates.append(_pack_json(t))
+q = query.lower()
+if "balance" in q or "ending balance" in q or "current balance" in q:
+    yr, mo = parse_month(q)
+    ym = f"{yr:04d}-{mo:02d}" if (yr and mo) else None
 
-    # 3) De-dup by transactionId, keep order of first appearance
-    seen = set()
-    uniq: List[Dict[str, object]] = []
-    for c in candidates:
-        tid = c.get("transactionId")
-        if tid in seen:
-            continue
-        seen.add(tid)
-        uniq.append(c)
+    pool = [
+        t for t in txns
+        if (t.transaction_status or "").upper() == "POSTED"
+        and (ym is None or month_key(t.transaction_date_time) == ym)
+    ]
+    if not pool:
+        pool = [
+            t for t in txns
+            if (ym is None or month_key(t.transaction_date_time) == ym)
+        ]
+    pool.sort(key=lambda x: (x.transaction_date_time or ""))
+    tail = pool[-3:]
+    for t in tail:
+        docs.append({"id": t.id, "text": _pack_text(t), "score": 1e9})
 
-    # cap to top_k (LLM doesn’t need everything)
-    return uniq[:top_k]
+    # 2) Fallback to NPZ if present
+    if has_index("tx_index") and os.getenv("OPENAI_API_KEY"):
+        try:
+            return semantic_search(query, top_k=top_k, filename="tx_index")
+        except Exception:
+            pass
+    # 3) Keyword fallback
+    docs = [{"id": t.id, "text": _pack_text(t)} for t in txns]
+    return _keyword_rank(query, docs, top_k) or docs[:top_k]

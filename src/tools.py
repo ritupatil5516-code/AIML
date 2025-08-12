@@ -24,33 +24,8 @@ def filter_transactions(transactions: List[Transaction],
         res.append({"transactionId": t.id, "amount": t.amount, "type": t.transaction_type, "date": t.transaction_date_time})
     return res
 
-def sum_amounts(items):
-    total = 0.0
-    for i in items:
-        if not i:
-            continue
-        # If it's a Pydantic model, turn it into a dict
-        if hasattr(i, "model_dump"):
-            data = i.model_dump()
-        elif hasattr(i, "dict"):
-            data = i.dict()
-        elif isinstance(i, str):
-            import json
-            try:
-                data = json.loads(i)
-            except Exception:
-                # string is not JSON, skip it
-                continue
-        elif isinstance(i, dict):
-            data = i
-        else:
-            continue
-
-        try:
-            total += float(data.get("amount") or 0.0)
-        except Exception:
-            pass
-    return total
+def sum_amounts(items: List[Dict[str, Any]]) -> float:
+    return float(sum((i.get("amount") or 0.0) for i in items))
 
 def count_items(items: List[Dict[str, Any]]) -> int:
     return int(len(items))
@@ -60,3 +35,58 @@ def get_transaction_by_id(transactions: List[Transaction], txn_id: str) -> Dict[
         if (t.id or "") == (txn_id or ""):
             return {"transactionId": t.id, "amount": t.amount, "type": t.transaction_type, "date": t.transaction_date_time, "status": t.transaction_status, "currency": t.currency_code, "merchant": t.merchant_name}
     return None
+
+
+
+import json
+from typing import Iterable
+
+def _to_dict(i):
+    if i is None:
+        return {}
+    if hasattr(i, "model_dump"):
+        return i.model_dump(by_alias=True)
+    if hasattr(i, "dict"):
+        return i.dict(by_alias=True)
+    if isinstance(i, dict):
+        return i
+    if isinstance(i, str):
+        try:
+            return json.loads(i)
+        except Exception:
+            return {}
+    return {}
+
+def sum_amounts(items: Iterable) -> float:
+    total = 0.0
+    for i in items:
+        d = _to_dict(i)
+        try:
+            total += float(d.get("amount") or 0.0)
+        except Exception:
+            pass
+    return float(total)
+
+def sum_credits(transactions: Iterable, month: str | None = None) -> float:
+    """Sum all POSTED credits across dataset. Credit = debitCreditIndicator == -1 or amount > 0."""
+    total = 0.0
+    for t in transactions:
+        d = _to_dict(t)
+        status = (d.get("transactionStatus") or d.get("transaction_status") or "").upper()
+        if status != "POSTED":
+            continue
+        ind = d.get("debitCreditIndicator")
+        try:
+            ind = int(ind)
+        except Exception:
+            ind = None
+        amt = float(d.get("amount") or 0.0)
+        is_credit = (ind == -1) or (amt > 0)
+        if not is_credit:
+            continue
+        if month:
+            dt = (d.get("transactionDateTime") or d.get("transaction_date_time") or "")
+            if not (isinstance(dt, str) and dt[:7] == month):
+                continue
+        total += amt
+    return float(total)
